@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Disco Quadrado</title>
+  <style>
+    body {
+      margin: 0;
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: sans-serif;
+      color: #ccc;
+    }
+    canvas { border: 1px solid #333; }
+    p { margin-top: 8px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <canvas id="gl-canvas" width="450" height="450"></canvas>
+  <p>Pressione <kbd>c</kbd> para mostrar/ocultar os contornos dos triângulos</p>
+
+  <script>
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl');
+    if (!gl) { alert('WebGL não suportado'); }
+
+    // ── Shaders ──────────────────────────────────────────────────────────────
+    const vsSource = `
+      attribute vec2 aPosition;
+      uniform mat4  uProjection;
+      void main() {
+        gl_Position = uProjection * vec4(aPosition, 0.0, 1.0);
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      uniform vec4 uColor;
+      void main() {
+        gl_FragColor = uColor;
+      }
+    `;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function criaShader(gl, tipo, fonte) {
+      const shader = gl.createShader(tipo);
+      gl.shaderSource(shader, fonte);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    function criaPrograma(gl, vs, fs) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(prog));
+        return null;
+      }
+      return prog;
+    }
+
+    // ── Programa WebGL ────────────────────────────────────────────────────────
+    const prog = criaPrograma(
+      gl,
+      criaShader(gl, gl.VERTEX_SHADER,   vsSource),
+      criaShader(gl, gl.FRAGMENT_SHADER, fsSource)
+    );
+
+    const locPosition   = gl.getAttribLocation(prog,  'aPosition');
+    const locProjection = gl.getUniformLocation(prog,  'uProjection');
+    const locColor      = gl.getUniformLocation(prog,  'uColor');
+
+    // ── Projeção ortográfica: x∈[0,W], y∈[0,H] (y cresce ↓) ─────────────────
+    const W = gl.canvas.width;
+    const H = gl.canvas.height;
+    const projection = new Float32Array([
+       2/W,   0,    0, 0,
+       0,   -2/H,   0, 0,
+       0,    0,    -1, 0,
+      -1,    1,     0, 1,
+    ]);
+
+    // ── Geometria: disco quadrado (anel) ──────────────────────────────────────
+    // Centro da tela
+    const cx = W / 2;
+    const cy = H / 2;
+
+    // Tamanhos do quadrado externo e interno
+    const FORA = 150;  // meia-largura do quadrado externo
+    const DENTRO = 80; // meia-largura do quadrado interno
+
+    // Vértices do anel usando TRIANGLE_STRIP
+    // Ordem: O0, I0, O1, I1, O2, I2, O3, I3, O0, I0
+    // O = vértices externos, I = vértices internos
+    // (sentido horário começando pelo canto superior-esquerdo)
+    const vertices = new Float32Array([
+      cx - FORA,   cy - FORA,   // O0: externo TL
+      cx - DENTRO, cy - DENTRO, // I0: interno TL
+      cx + FORA,   cy - FORA,   // O1: externo TR
+      cx + DENTRO, cy - DENTRO, // I1: interno TR
+      cx + FORA,   cy + FORA,   // O2: externo BR
+      cx + DENTRO, cy + DENTRO, // I2: interno BR
+      cx - FORA,   cy + FORA,   // O3: externo BL
+      cx - DENTRO, cy + DENTRO, // I3: interno BL
+      cx - FORA,   cy - FORA,   // O0 (repetido para fechar)
+      cx - DENTRO, cy - DENTRO, // I0 (repetido para fechar)
+    ]);
+    // Resultado: 8 triângulos cobrindo o anel sem sobreposição
+
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+    // ── Estado ────────────────────────────────────────────────────────────────
+    let mostrarContornos = false;
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'c' || e.key === 'C') {
+        mostrarContornos = !mostrarContornos;
+        desenhar();
+      }
+    });
+
+    // ── Renderização ──────────────────────────────────────────────────────────
+    function desenhar() {
+      gl.clearColor(0.1, 0.1, 0.15, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.useProgram(prog);
+      gl.uniformMatrix4fv(locProjection, false, projection);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.enableVertexAttribArray(locPosition);
+      gl.vertexAttribPointer(locPosition, 2, gl.FLOAT, false, 0, 0);
+
+      // 1ª passagem: preenchimento azul com TRIANGLE_STRIP
+      gl.uniform4fv(locColor, [0.0, 0.2, 0.8, 1.0]);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 10);
+
+      // 2ª passagem: contornos pretos com LINE_STRIP (quando 'c' pressionado)
+      if (mostrarContornos) {
+        gl.uniform4fv(locColor, [0.0, 0.0, 0.0, 1.0]);
+        gl.drawArrays(gl.LINE_STRIP, 0, 10);
+      }
+    }
+
+    desenhar();
+  </script>
+</body>
+</html>

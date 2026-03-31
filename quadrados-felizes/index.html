@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quadrados Felizes</title>
+  <style>
+    body {
+      margin: 0;
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: sans-serif;
+      color: #ccc;
+    }
+    canvas { border: 1px solid #333; }
+    p { margin-top: 8px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <canvas id="gl-canvas" width="450" height="450"></canvas>
+  <p>Exercício 1 — 9 quadrados coloridos</p>
+
+  <script>
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl');
+    if (!gl) { alert('WebGL não suportado'); }
+
+    // ── Shaders ──────────────────────────────────────────────────────────────
+    const vsSource = `
+      attribute vec2 aPosition;
+      uniform vec2  uDeslocamento;
+      uniform mat4  uProjection;
+      void main() {
+        gl_Position = uProjection * vec4(aPosition + uDeslocamento, 0.0, 1.0);
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      uniform vec4 uColor;
+      void main() {
+        gl_FragColor = uColor;
+      }
+    `;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function criaShader(gl, tipo, fonte) {
+      const shader = gl.createShader(tipo);
+      gl.shaderSource(shader, fonte);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    function criaPrograma(gl, vs, fs) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(prog));
+        return null;
+      }
+      return prog;
+    }
+
+    // ── Programa WebGL ────────────────────────────────────────────────────────
+    const prog = criaPrograma(
+      gl,
+      criaShader(gl, gl.VERTEX_SHADER,   vsSource),
+      criaShader(gl, gl.FRAGMENT_SHADER, fsSource)
+    );
+
+    const locPosition    = gl.getAttribLocation(prog,  'aPosition');
+    const locDeslocamento = gl.getUniformLocation(prog, 'uDeslocamento');
+    const locProjection  = gl.getUniformLocation(prog,  'uProjection');
+    const locColor       = gl.getUniformLocation(prog,  'uColor');
+
+    // ── Projeção ortográfica: x∈[0,W], y∈[0,H] (y cresce ↓) ─────────────────
+    const W = gl.canvas.width;
+    const H = gl.canvas.height;
+    // Coluna-major para WebGL (uniformMatrix4fv com transpose=false)
+    const projection = new Float32Array([
+       2/W,   0,    0, 0,   // col 0
+       0,   -2/H,   0, 0,   // col 1
+       0,    0,    -1, 0,   // col 2
+      -1,    1,     0, 1,   // col 3
+    ]);
+
+    // ── Geometria: um quadrado 100×100 centrado na origem ─────────────────────
+    const TAMANHO = 100;
+    const h = TAMANHO / 2;
+    // TRIANGLE_FAN com 4 vértices → 2 triângulos cobrindo o quad
+    const verticesQuadrado = new Float32Array([
+      -h, -h,   // TL
+       h, -h,   // TR
+       h,  h,   // BR
+      -h,  h,   // BL
+    ]);
+
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, verticesQuadrado, gl.STATIC_DRAW);
+
+    // ── Grade 3×3 ─────────────────────────────────────────────────────────────
+    const GAP = 25;                             // espaço entre quadrados
+    const MARGEM = (W - 3 * TAMANHO - 2 * GAP) / 2; // centrar na tela
+    const inicio = MARGEM + h;                  // centro do primeiro quadrado
+
+    // Cores da aula (RGB normalizado)
+    const CORES = [
+      [0.0,  0.0,  0.0,  1.0],  // preto
+      [1.0,  0.0,  0.0,  1.0],  // vermelho
+      [0.0,  0.5,  0.0,  1.0],  // verde
+      [1.0,  1.0,  0.0,  1.0],  // amarelo
+      [0.0,  0.0,  1.0,  1.0],  // azul
+      [1.0,  0.65, 0.0,  1.0],  // laranja
+      [0.0,  1.0,  1.0,  1.0],  // ciano
+      [1.0,  0.0,  1.0,  1.0],  // magenta
+      [1.0,  1.0,  1.0,  1.0],  // branco
+    ];
+
+    // Cada quadrado é descrito por seu deslocamento (centro) e cor
+    const quadrados = [];
+    for (let lin = 0; lin < 3; lin++) {
+      for (let col = 0; col < 3; col++) {
+        quadrados.push({
+          deslocamento: [
+            inicio + col * (TAMANHO + GAP),
+            inicio + lin * (TAMANHO + GAP),
+          ],
+          cor: CORES[lin * 3 + col],
+        });
+      }
+    }
+
+    // ── Renderização ──────────────────────────────────────────────────────────
+    gl.clearColor(0.1, 0.1, 0.15, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(prog);
+    gl.uniformMatrix4fv(locProjection, false, projection);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.enableVertexAttribArray(locPosition);
+    gl.vertexAttribPointer(locPosition, 2, gl.FLOAT, false, 0, 0);
+
+    for (const quad of quadrados) {
+      gl.uniform2fv(locDeslocamento, quad.deslocamento);
+      gl.uniform4fv(locColor, quad.cor);
+      gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polígono Regular</title>
+  <style>
+    body {
+      margin: 0;
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: sans-serif;
+      color: #ccc;
+    }
+    canvas { border: 1px solid #333; }
+    p { margin-top: 8px; font-size: 13px; text-align: center; }
+    #info { font-size: 16px; font-weight: bold; color: #ffb86b; }
+  </style>
+</head>
+<body>
+  <canvas id="gl-canvas" width="450" height="450"></canvas>
+  <p id="info">Lados: 6</p>
+  <p>Use <kbd>+</kbd> / <kbd>-</kbd> para aumentar ou diminuir o número de lados</p>
+
+  <script>
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl');
+    if (!gl) { alert('WebGL não suportado'); }
+
+    // ── Shaders ──────────────────────────────────────────────────────────────
+    const vsSource = `
+      attribute vec2 aPosition;
+      uniform mat4  uProjection;
+      void main() {
+        gl_Position = uProjection * vec4(aPosition, 0.0, 1.0);
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      uniform vec4 uColor;
+      void main() {
+        gl_FragColor = uColor;
+      }
+    `;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function criaShader(gl, tipo, fonte) {
+      const shader = gl.createShader(tipo);
+      gl.shaderSource(shader, fonte);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    function criaPrograma(gl, vs, fs) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(prog));
+        return null;
+      }
+      return prog;
+    }
+
+    // ── Programa WebGL ────────────────────────────────────────────────────────
+    const prog = criaPrograma(
+      gl,
+      criaShader(gl, gl.VERTEX_SHADER,   vsSource),
+      criaShader(gl, gl.FRAGMENT_SHADER, fsSource)
+    );
+
+    const locPosition   = gl.getAttribLocation(prog,  'aPosition');
+    const locProjection = gl.getUniformLocation(prog,  'uProjection');
+    const locColor      = gl.getUniformLocation(prog,  'uColor');
+
+    // ── Projeção ortográfica: x∈[0,W], y∈[0,H] (y cresce ↓) ─────────────────
+    const W = gl.canvas.width;
+    const H = gl.canvas.height;
+    const projection = new Float32Array([
+       2/W,   0,    0, 0,
+       0,   -2/H,   0, 0,
+       0,    0,    -1, 0,
+      -1,    1,     0, 1,
+    ]);
+
+    // ── Polígono regular ──────────────────────────────────────────────────────
+    const NUM_LADOS = 6; // constante padrão
+    let numLados = NUM_LADOS;
+
+    const cx = W / 2;
+    const cy = H / 2;
+    const RAIO = 170;  // raio do polígono inscrito
+
+    // VBO dinâmico (atualizado a cada mudança)
+    const vbo = gl.createBuffer();
+
+    function gerarVertices(n) {
+      // TRIANGLE_FAN: primeiro vértice = centro, depois N+1 vértices no perímetro
+      const dados = [cx, cy]; // centro (hub do fan)
+      for (let k = 0; k <= n; k++) {
+        // Começa do topo (−π/2) e percorre no sentido horário
+        const angulo = (2 * Math.PI * k / n) - Math.PI / 2;
+        dados.push(cx + RAIO * Math.cos(angulo));
+        dados.push(cy + RAIO * Math.sin(angulo));
+      }
+      return new Float32Array(dados);
+    }
+
+    function atualizarVBO(n) {
+      const dados = gerarVertices(n);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, dados, gl.DYNAMIC_DRAW);
+      return n + 2; // total de vértices: centro + N perímetro + 1 fechamento
+    }
+
+    // ── Estado ────────────────────────────────────────────────────────────────
+    let numVertices = atualizarVBO(numLados);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '+' || e.key === '=') {
+        numLados++;
+        numVertices = atualizarVBO(numLados);
+        document.getElementById('info').textContent = `Lados: ${numLados}`;
+        desenhar();
+      } else if (e.key === '-' || e.key === '_') {
+        if (numLados > 3) {
+          numLados--;
+          numVertices = atualizarVBO(numLados);
+          document.getElementById('info').textContent = `Lados: ${numLados}`;
+          desenhar();
+        }
+      }
+    });
+
+    // ── Renderização ──────────────────────────────────────────────────────────
+    function desenhar() {
+      gl.clearColor(0.1, 0.1, 0.15, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.useProgram(prog);
+      gl.uniformMatrix4fv(locProjection, false, projection);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.enableVertexAttribArray(locPosition);
+      gl.vertexAttribPointer(locPosition, 2, gl.FLOAT, false, 0, 0);
+
+      // Preenchimento em verde-esmeralda
+      gl.uniform4fv(locColor, [0.18, 0.75, 0.45, 1.0]);
+      gl.drawArrays(gl.TRIANGLE_FAN, 0, numVertices);
+
+      // Contorno branco por cima
+      gl.uniform4fv(locColor, [1.0, 1.0, 1.0, 1.0]);
+      gl.drawArrays(gl.LINE_LOOP, 1, numLados);
+    }
+
+    desenhar();
+  </script>
+</body>
+</html>
